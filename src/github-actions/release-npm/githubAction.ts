@@ -80,7 +80,7 @@ async function abortIfNotOnNpm(packageName: string) {
 }
 function getNotOnNpmReason(packageName: string) {
   return `${packageName} isn't on npm yet, and npm can't set up a trusted publisher for it until it is: publish its first version manually ($ pnpm publish), then set up its trusted publisher (see ${pc.underline(
-    'https://github.com/brillout/release-me#npm-release',
+    'https://github.com/brillout/release-me#github-action-npm-release',
   )})` as const
 }
 
