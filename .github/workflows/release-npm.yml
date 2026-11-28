@@ -1,4 +1,4 @@
-# Publishes to npm, see https://github.com/brillout/release-me#npm-release
+# Publishes to npm, see https://github.com/brillout/release-me#github-action-npm-release
 # - By pushing a release tag, or
 # - by pressing the "Run workflow" button.
 

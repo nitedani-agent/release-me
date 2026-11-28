@@ -5,9 +5,8 @@ Publish your npm packages.
 [Features](#features)  
 [Get started](#get-started)  
 [Conventional Commits](#conventional-commits)  
-[GitHub Actions](#github-actions)  
-&nbsp;&nbsp;&nbsp;&nbsp;[Npm Release](#npm-release)  
-&nbsp;&nbsp;&nbsp;&nbsp;[GitHub Release](#github-release)  
+[[GitHub Action] Npm Release](#github-action-npm-release)\
+[[GitHub Action] GitHub Release](#github-action-github-release)\
 [CLI](#cli)  
 
 <br/>
@@ -15,8 +14,8 @@ Publish your npm packages.
 ## Features
 
 - Monorepo support
-- Can publish via a GitHub Action instead of your machine: no npm login/2FA/token needed (see [GitHub Actions > Npm Release](#npm-release))
-- Creates: release Git commit & Git tag, `CHANGELOG.md`,  GitHub Release (see [GitHub Actions > GitHub Release](#github-release))
+- Can publish via a GitHub Action instead of your machine: no npm login/2FA/token needed (see [[GitHub Action] Npm Release](#github-action-npm-release))
+- Creates: release Git commit & Git tag, `CHANGELOG.md`,  GitHub Release (see [[GitHub Action] GitHub Release](#github-action-github-release))
 - Shows a preview of the release, and asks for confirmation before releasing
 - "Commit releases": publish any commit as a pre-release, e.g. [`0.4.177-commit-ff3d6cd`](https://www.npmjs.com/package/vike/v/0.4.177-commit-ff3d6cd)
 - Updates `const PROJECT_VERSION = '0.1.2'` of `PROJECT_VERSION.ts` files
@@ -74,7 +73,7 @@ Publish your npm packages.
    >
    > Run `pnpm run release:commit` to publish the current commit to npm as a pre-release `my-package@1.2.3-commit-abc1234`.
    >
-   > With the [Release Npm GitHub Action](#npm-release), you can also use the **Run workflow** button on GitHub instead.
+   > With the [Release Npm GitHub Action](#github-action-npm-release), you can also use the **Run workflow** button on GitHub instead.
    >
    > ⚠️ **Only commit-release commits you trust** (e.g. review a pull request before commit-releasing it).
 
@@ -105,8 +104,8 @@ Publish your npm packages.
    > ℹ️  **Two GitHub Actions**
    >
    > The `init` command sets up two GitHub Actions for:
-   > - `.github/workflows/release-npm.yml` => for npm publishing, see [GitHub Actions](#github-actions)
-   > - `.github/workflows/release-github.yml` => for creating GitHub Releases, see [GitHub Actions](#github-actions)
+   > - `.github/workflows/release-npm.yml` => for npm publishing, see [[GitHub Action] Npm Release](#github-action-npm-release)
+   > - `.github/workflows/release-github.yml` => for creating GitHub Releases, see [[GitHub Action] GitHub Release](#github-action-github-release)
    >
    > It's optional: you can skip the `init` command to set up none, or set up only one using `init --npm` or `init --github`.
 
@@ -146,6 +145,9 @@ Each package has its own `CHANGELOG.md` (`packages/my-package/CHANGELOG.md`), wi
 
 <br/>
 
+<a name="github-actions"></a>
+<a name="npm-release"></a>
+
 ## [GitHub Action] Npm Release
 
 Instead of publishing from your machine (which requires 2FA), you can let a GitHub Action publish to npm (without 2FA and without an npm secret token).
@@ -160,6 +162,8 @@ pnpm exec release-me init --npm
 
 > [!WARNING]
 > Anyone with write access can publish: **only give repository write access to people you trust**.
+
+<a name="github-release"></a>
 
 ## [GitHub Action] GitHub Release
 

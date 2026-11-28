@@ -8,7 +8,7 @@ export type { WorkflowFile }
 export type { WorkflowFileOptions }
 export type { WriteResult }
 
-// The GitHub Actions of release-me, see https://github.com/brillout/release-me#npm-release and https://github.com/brillout/release-me#github-release
+// The GitHub Actions of release-me, see https://github.com/brillout/release-me#github-action-npm-release and https://github.com/brillout/release-me#github-action-github-release
 // - .github/workflows/release-npm.yml publishes to npm.
 //   (release-me 0.5.0 named it release.yml: `$ pnpm exec release-me init` renames it.)
 // - .github/workflows/release-github.yml keeps GitHub Releases in sync with CHANGELOG.md.
