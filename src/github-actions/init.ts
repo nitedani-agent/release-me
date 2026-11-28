@@ -20,7 +20,13 @@ import { getPublishingStatus, type PublishingStatus } from './release-npm/npmReg
 import { getNpmUnavailableReason } from './release-npm/npmTrust.ts'
 import { getDeleteTrustedPublisherManual, getTrustedPublisherManual } from './release-npm/trustedPublisher.ts'
 import { githubReleaseSyncCommand, initCommand, npmConnectionCommand } from './commands.ts'
-import { getInstallSteps, getLockfilePath, getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
+import {
+  assertPnpm,
+  getInstallSteps,
+  getLockfilePath,
+  getPackageJsonSteps,
+  type PackageJsonStep,
+} from './packageJsonSteps.ts'
 import { logManualSteps, runSteps, type Step, type StepOutcome } from './steps.ts'
 import { getGitHubRepo, noGitHubRepoMessage } from './utils/githubRepo.ts'
 import { getCurrentBranch, getDefaultBranch, gitFetch, gitPush, isAheadOfOrigin, isBehindOrigin } from './utils/git.ts'
@@ -45,6 +51,7 @@ import { formatHint, highlightCommand, logCommand, logDetail, logTitle, run } fr
 async function init(options: WorkflowFileOptions) {
   const monorepoRootDir = await getMonorepoRootDir()
   assertInstalledAtRoot(monorepoRootDir, { isInit: true })
+  assertPnpm(monorepoRootDir)
   const filesMonorepo = await getFilesInsideDir(monorepoRootDir)
   const packages = getReleaseMePackages(filesMonorepo)
   const packageNames = packages.map(({ packageName }) => packageName)

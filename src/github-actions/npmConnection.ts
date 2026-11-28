@@ -20,7 +20,7 @@ import {
 } from './release-npm/npmTrust.ts'
 import { getAccessLink, getTrustedPublisherManual } from './release-npm/trustedPublisher.ts'
 import { initCommand } from './commands.ts'
-import { getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
+import { assertPnpm, getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
 import { logManualSteps, runSteps, type Step, type StepOutcome } from './steps.ts'
 import { getGitHubRepo, noGitHubRepoMessage } from './utils/githubRepo.ts'
 import { isWorkflowFileUpToDate, releaseNpmWorkflowFile } from './workflowFiles.ts'
@@ -31,6 +31,7 @@ import { assertUsage, highlightCommand, logDetail, logTitle } from '../utils.ts'
 async function npmConnection() {
   const monorepoRootDir = await getMonorepoRootDir()
   assertInstalledAtRoot(monorepoRootDir)
+  assertPnpm(monorepoRootDir)
   const packages = getReleaseMePackages(await getFilesInsideDir(monorepoRootDir))
   const packageNames = packages.map(({ packageName }) => packageName)
   const repo = await getGitHubRepo(monorepoRootDir)

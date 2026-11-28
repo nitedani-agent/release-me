@@ -3,6 +3,7 @@ export { getInstallSteps }
 export { setPackageJsonFields }
 export { getRepositoryValue }
 export { getLockfilePath }
+export { assertPnpm }
 export type { PackageJsonStep }
 
 // The package.json changes that the GitHub Actions of release-me require, as steps of `$ pnpm exec release-me init` (see
@@ -25,7 +26,7 @@ import {
   type PackageJson,
   type ReleaseMePackage,
 } from '../releaseMe.ts'
-import { highlightCommand, logCommand } from '../utils.ts'
+import { assertUsage, highlightCommand, logCommand } from '../utils.ts'
 
 type PackageJsonStep = Step & {
   /** The package.json the step changes */
@@ -73,6 +74,18 @@ function getVersionRange(filesMonorepo: Files): string {
   }
   const thisPackageRootDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
   return `^${getPackageJson(thisPackageRootDir).packageJson.version}`
+}
+
+/** release-me only supports pnpm (e.g. the GitHub Actions install pnpm, and release-me runs `$ pnpm publish`) */
+function assertPnpm(monorepoRootDir: string) {
+  const { packageJson, packageJsonPath } = getPackageJson(monorepoRootDir)
+  const { packageManager, devEngines } = packageJson
+  const name = packageManager?.split('@')[0] || devEngines?.packageManager?.name
+  const field = packageManager ? 'packageManager' : 'devEngines.packageManager'
+  assertUsage(
+    !name || name === 'pnpm',
+    `${packageJsonPath}#${pc.bold(field)} is ${pc.cyan(name!)}, but release-me only supports ${pc.cyan('pnpm')}.`,
+  )
 }
 
 const releaseScripts = {
