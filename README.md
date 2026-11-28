@@ -145,9 +145,6 @@ Each package has its own `CHANGELOG.md` (`packages/my-package/CHANGELOG.md`), wi
 
 <br/>
 
-<a name="github-actions"></a>
-<a name="npm-release"></a>
-
 ## [GitHub Action] Npm Release
 
 Instead of publishing from your machine (which requires 2FA), you can let a GitHub Action publish to npm (without 2FA and without an npm secret token).
@@ -162,8 +159,6 @@ pnpm exec release-me init --npm
 
 > [!WARNING]
 > Anyone with write access can publish: **only give repository write access to people you trust**.
-
-<a name="github-release"></a>
 
 ## [GitHub Action] GitHub Release
 
