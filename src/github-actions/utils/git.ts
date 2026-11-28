@@ -70,6 +70,16 @@ async function gitPush(cwd: string, branch: string): Promise<boolean> {
       ),
     )
   }
+  // E.g. a commit was pushed to origin in the meantime
+  if (output?.includes('[rejected]') || output?.includes('non-fast-forward')) {
+    console.log(
+      pc.yellow(
+        `${pc.cyan(`origin/${branch}`)} has commits that ${pc.cyan(branch)} doesn't have: run ${highlightCommand(
+          '$ git pull --rebase',
+        )}, then ${highlightCommand('$ git push')}.`,
+      ),
+    )
+  }
   return false
 }
 
