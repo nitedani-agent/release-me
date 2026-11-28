@@ -160,6 +160,11 @@ pnpm exec release-me init --npm
 > [!WARNING]
 > Anyone with write access can publish: **only give repository write access to people you trust**.
 
+> [!NOTE]
+> It's optional: if your repository doesn't have the `.github/workflows/release-npm.yml` file, then the release commands (e.g. `$ release-me patch`) directly publishes to npm on from your machine (requires 2FA).
+
+<br/>
+
 ## [GitHub Action] GitHub Release
 
 You can let a GitHub Action automatically generate GitHub Releases from your `CHANGELOG.md` files.
@@ -207,9 +212,14 @@ pnpm exec release-me github-release-sync
 > [!NOTE]
 > `CHANGELOG.md` is the source of truth: **upon each push of a `CHANGELOG.md` change to `main`, GitHub Releases are created, updated, and deleted to match exactly `CHANGELOG.md`**. Always edit `CHANGELOG.md` instead of a GitHub Release: the next sync overwrites any edit made to a GitHub Release.
 
+> [!NOTE]
+> It's optional.
+
 <br/>
 
 ## CLI
+
+### Release
 
 ```shell
 pnpm exec release-me patch           # Release a new patch version (0.1.2 => 0.1.3)
@@ -217,7 +227,12 @@ pnpm exec release-me minor           # Release a new minor version (0.1.2 => 0.2
 pnpm exec release-me major           # Release a new major version (0.1.2 => 1.0.0)
 pnpm exec release-me v0.1.5          # Release a specific version
 pnpm exec release-me commit          # Release the current commit (0.1.2-commit-ff3d6cd)
-pnpm exec release-me patch --yes     # Skip the confirmation
+pnpm exec release-me patch --yes     # Skip confirmation
 pnpm exec release-me patch --force   # Release even in unexpected situations (e.g. from another branch than main, or without CHANGELOG.md entry)
-pnpm exec release-me npm-connection  # Show and fix the npm <=> GitHub connection of each package (npm's trusted publisher)
+```
+
+### Other
+
+```shell
+pnpm exec release-me npm-connection  # Show and/or fix the npm <=> GitHub connection of each package (npm's trusted publisher)
 ```
