@@ -8,8 +8,6 @@ export type { ConnectStep }
 // The steps (see ../steps.ts) that set up npm <=> GitHub connections (npm's trusted publishers), shared by
 // `$ pnpm exec release-me init` and `$ pnpm exec release-me npm-connection`
 
-import * as fs from 'fs'
-import * as path from 'path'
 import pc from '@brillout/picocolors'
 import { createTrustedPublisher } from './npmTrust.ts'
 import type { PackageJsonStep } from '../packageJsonSteps.ts'
@@ -17,7 +15,7 @@ import type { Step, StepOutcome } from '../steps.ts'
 import { getGhUnavailableReason, runWorkflow } from '../utils/gh.ts'
 import { getDefaultBranch, getFileOnOrigin } from '../utils/git.ts'
 import { getRunWorkflowCta, getWorkflowLink } from '../utils/workflowLink.ts'
-import { releaseNpmWorkflowFile } from '../workflowFiles.ts'
+import { getWorkflowFileExpected, releaseNpmWorkflowFile } from '../workflowFiles.ts'
 import { highlightCommand } from '../../utils.ts'
 
 type ConnectStep = Step & { packageName: string }
@@ -47,6 +45,8 @@ type CommitReleaseOptions = {
   packagesToKeep?: string[]
   /** The package.json changes, among them the ones that the GitHub Action requires (it runs with the default branch on GitHub, so they must be pushed) */
   packageJsonSteps: PackageJsonStep[]
+  /** The other steps that the GitHub Action requires, e.g. the one that updates release-npm.yml */
+  setupSteps?: { step: Step; requirement: string }[]
   /** The step that pushes the commit (release-npm.yml and the package.json changes) */
   pushStep: Step | null
 }
@@ -71,9 +71,15 @@ function createCommitReleaseStep({
   ghUnavailableReason,
   isWorkflowOnGitHub,
   packageJsonSteps,
+  setupSteps = [],
   pushStep,
 }: CommitReleaseOptions & { ghUnavailableReason: string | null; isWorkflowOnGitHub: boolean }): Step {
-  const requiredSteps = packageJsonSteps.filter((step) => step.requiredByGitHubAction)
+  const requiredSteps = [
+    ...setupSteps,
+    ...packageJsonSteps.flatMap((step) =>
+      step.requiredByGitHubAction ? [{ step, requirement: step.requiredByGitHubAction }] : [],
+    ),
+  ]
   const workflowLink = getWorkflowLink(releaseNpmWorkflowFile, repo)
   const workflow = pc.bold(releaseNpmWorkflowFile.fileName)
   // The packages to commit-release: the ones connected (or to connect), and the ones to keep
@@ -88,11 +94,11 @@ function createCommitReleaseStep({
     getNotPossibleReason: (isChecked) => {
       if (getPackageNames(isChecked).length === 0) return 'no package gets a new connection'
       // Otherwise the GitHub Action fails, and npm deletes the new connection
-      const missing = requiredSteps.find((step) => !isChecked(step))
-      if (missing) return `the GitHub Action requires ${missing.requiredByGitHubAction}`
+      const missing = requiredSteps.find(({ step }) => !isChecked(step))
+      if (missing) return `the GitHub Action requires ${missing.requirement}`
       if (!(pushStep && isChecked(pushStep))) {
         if (!isWorkflowOnGitHub) return `${workflow} isn't on GitHub yet`
-        if (requiredSteps.length > 0) return "the package.json changes aren't on GitHub yet"
+        if (requiredSteps.length > 0) return "the changes aren't on GitHub yet"
       }
       return null
     },
@@ -139,12 +145,10 @@ function getPackagesLabel(packageNames: string[], allPackageNames: string[]): st
   return packageNames.length < allPackageNames.length ? `: ${packageNames.map((p) => pc.bold(p)).join(', ')}` : ''
 }
 
-/** Whether the default branch of `origin` has the current release-npm.yml (as of the last `$ git fetch`) */
+/** Whether the default branch of `origin` has the installed release-me's release-npm.yml (as of the last `$ git fetch`) */
 async function isReleaseNpmOnGitHub(monorepoRootDir: string): Promise<boolean> {
   const defaultBranch = await getDefaultBranch(monorepoRootDir)
   if (!defaultBranch) return false
-  const { filePath } = releaseNpmWorkflowFile
-  const content = await getFileOnOrigin(monorepoRootDir, defaultBranch, filePath)
-  const contentLocal = fs.readFileSync(path.join(monorepoRootDir, filePath), 'utf8').replace(/\r\n/g, '\n')
-  return content === contentLocal
+  const content = await getFileOnOrigin(monorepoRootDir, defaultBranch, releaseNpmWorkflowFile.filePath)
+  return content === getWorkflowFileExpected(releaseNpmWorkflowFile)
 }

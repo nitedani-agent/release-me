@@ -1,9 +1,10 @@
 export { init }
 
-// `$ pnpm exec release-me init [--npm] [--github]` creates (or updates) .github/workflows/release-npm.yml and/or
-// .github/workflows/release-github.yml (see getWorkflowFilesToInit()), then sets up the rest on behalf of the user (see
-// ./steps.ts): the package.json fields the GitHub Actions require, npm's trusted publishers, the push, the commit release
-// that persists the new trusted publishers, and the first sync of GitHub Releases.
+// `$ pnpm exec release-me init [--npm] [--github]` sets up release-me on behalf of the user (see ./steps.ts: it lists all
+// steps at once, then runs the ones the user keeps): it creates (or updates) .github/workflows/release-npm.yml and/or
+// .github/workflows/release-github.yml (see getWorkflowFilesToInit()), the package.json fields the GitHub Actions require,
+// the commit, npm's trusted publishers, the push, the commit release that persists the new trusted publishers, and the
+// first sync of GitHub Releases.
 
 import * as fs from 'fs'
 import pc from '@brillout/picocolors'
@@ -35,7 +36,8 @@ import {
   getWorkflowFilesToInit,
   releaseGitHubWorkflowFile,
   releaseNpmWorkflowFile,
-  writeWorkflowFiles,
+  getWorkflowFileChanges,
+  writeWorkflowFile,
   type WorkflowFileOptions,
   type WriteResult,
 } from './workflowFiles.ts'
@@ -44,6 +46,7 @@ import {
   getFilesInsideDir,
   getMonorepoRootDir,
   getReleaseMePackages,
+  thisPackageName,
   type ReleaseMePackage,
 } from '../releaseMe.ts'
 import { isTerminal } from '../utils/ask.ts'
@@ -61,23 +64,25 @@ async function init(options: WorkflowFileOptions) {
   const packageNames = packages.map(({ packageName }) => packageName)
   const repo = await getGitHubRepo(monorepoRootDir)
 
-  const results = writeWorkflowFiles(monorepoRootDir, getWorkflowFilesToInit(monorepoRootDir, options))
+  const results = getWorkflowFileChanges(monorepoRootDir, getWorkflowFilesToInit(monorepoRootDir, options))
   logWorkflowFiles(results)
   const releaseNpmResult = results.find(({ workflowFile }) => workflowFile === releaseNpmWorkflowFile)
   const releaseGitHubResult = results.find(({ workflowFile }) => workflowFile === releaseGitHubWorkflowFile)
-  const changes = results.filter(({ status }) => status !== 'up-to-date')
 
-  // The steps, in order
+  // The steps, in order: all of them are listed at once (the user unchecks the ones they don't want), then run
+  const workflowFileSteps = results.flatMap((result) =>
+    result.status === 'up-to-date' ? [] : [getWorkflowFileStep(monorepoRootDir, result)],
+  )
   const packageJsonSteps = [
     ...privatePackageSteps,
     ...(await getInstallSteps(monorepoRootDir, filesMonorepo)),
     ...(await getPackageJsonSteps(monorepoRootDir, packages, repo, !!releaseNpmResult)),
   ]
-  const commitStep = getCommitStep(monorepoRootDir, changes, packageJsonSteps)
+  const commitStep = getCommitStep(monorepoRootDir, workflowFileSteps, packageJsonSteps)
   const npm = releaseNpmResult ? await getNpmSteps(packages, repo, releaseNpmResult) : null
   const connectSteps = npm?.connectSteps ?? []
-  const willCommit = changes.length > 0 || packageJsonSteps.some((step) => !step.notPossibleReason)
-  const pushStep = await getPushStep(monorepoRootDir, repo, willCommit)
+  const pushStep = await getPushStep(monorepoRootDir, repo, commitStep)
+  const releaseNpmStep = workflowFileSteps.find(({ change }) => change === releaseNpmResult) ?? null
   const commitReleaseStep =
     npm && repo
       ? await getCommitReleaseStep(monorepoRootDir, {
@@ -85,51 +90,109 @@ async function init(options: WorkflowFileOptions) {
           allPackageNames: packageNames,
           connectSteps,
           packageJsonSteps,
+          setupSteps: [
+            ...(releaseNpmStep
+              ? [{ step: releaseNpmStep, requirement: `an up-to-date ${pc.bold(releaseNpmWorkflowFile.fileName)}` }]
+              : []),
+            ...(commitStep ? [{ step: commitStep, requirement: 'the changes to be committed' }] : []),
+          ],
           pushStep,
         })
       : null
   // The first sync of GitHub Releases (afterwards, the GitHub Action syncs them upon each CHANGELOG.md change)
-  const syncStep = releaseGitHubResult?.status === 'created' ? await getGitHubReleaseSyncStep() : null
-  const steps = [...packageJsonSteps, commitStep, ...connectSteps, pushStep, commitReleaseStep, syncStep].filter(
-    (step): step is Step => !!step,
-  )
+  const releaseGitHubStep = workflowFileSteps.find(({ change }) => change === releaseGitHubResult) ?? null
+  const syncStep =
+    releaseGitHubResult?.status === 'created' && releaseGitHubStep
+      ? await getGitHubReleaseSyncStep(releaseGitHubStep)
+      : null
+  const steps = [
+    ...workflowFileSteps,
+    ...packageJsonSteps,
+    commitStep,
+    ...connectSteps,
+    pushStep,
+    commitReleaseStep,
+    syncStep,
+  ].filter((step): step is Step => !!step)
 
   if (steps.some((step) => !step.alwaysRun)) logTitle('Set up')
   const outcomes = await runSteps(steps)
   logConnected(connectSteps, outcomes, packageNames)
-  logInitManualSteps(steps, outcomes, npm, commitStep)
+  logInitManualSteps(steps, outcomes, npm, commitStep ?? packageJsonSteps.at(-1) ?? null)
 }
 
+/** What's to be done of the workflow files (the steps do it) */
 function logWorkflowFiles(results: WriteResult[]) {
   logTitle('GitHub Action', true)
   for (const result of results) {
     const filePath = pc.bold(result.workflowFile.filePath)
-    if (result.status === 'up-to-date') console.log(`${filePath} is up-to-date`)
-    else if (result.status === 'renamed') console.log(`Renamed ${pc.bold(result.old.filePath)} to ${filePath}`)
-    else console.log(`${result.status === 'created' ? 'Created' : 'Updated'} ${filePath}`)
+    if (result.status === 'up-to-date') console.log(`${pc.green('✅')} ${filePath} is up-to-date`)
+    else if (result.status === 'created') console.log(`${pc.red('❌')} ${filePath} is missing`)
+    else if (result.status === 'updated') console.log(`${pc.red('❌')} ${filePath} is outdated`)
+    else if (result.status === 'renamed')
+      console.log(`${pc.red('❌')} ${filePath} has its old name ${pc.bold(result.old.filePath)}`)
   }
 }
 
-/** Commits the workflow files and the package.json changes. It always runs (also if the user skips the other steps). */
-function getCommitStep(monorepoRootDir: string, changes: WriteResult[], packageJsonSteps: PackageJsonStep[]): Step {
+type WorkflowFileStep = Step & { change: WriteResult }
+/** Creates, updates, or renames a workflow file */
+function getWorkflowFileStep(monorepoRootDir: string, change: WriteResult): WorkflowFileStep {
+  const { workflowFile } = change
+  const filePath = pc.bold(workflowFile.filePath)
+  const label =
+    change.status === 'renamed'
+      ? `Rename ${pc.bold(change.old.filePath)} to ${filePath} ${pc.dim('(and update it)')}`
+      : `${change.status === 'created' ? 'Create' : 'Update'} ${filePath}`
+  const source = pc.bold(`node_modules/${thisPackageName}/${workflowFile.filePath}`)
   return {
-    label: 'Commit',
-    alwaysRun: true,
+    change,
+    label,
+    run: async () => {
+      writeWorkflowFile(monorepoRootDir, change)
+      return true
+    },
+    manual: `${label}: copy ${source}${
+      change.status === 'renamed' ? `, and remove ${pc.bold(change.old.filePath)}` : ''
+    } (or run ${pc.bold(initCommand)} in a terminal)`,
+  }
+}
+
+/** Commits the workflow files and the package.json changes. `null` if there is nothing to commit. */
+function getCommitStep(
+  monorepoRootDir: string,
+  workflowFileSteps: WorkflowFileStep[],
+  packageJsonSteps: PackageJsonStep[],
+): Step | null {
+  const changeSteps = [...workflowFileSteps, ...packageJsonSteps]
+  if (changeSteps.every((step) => step.notPossibleReason)) return null
+  return {
+    label: `Commit the changes ${pc.dim('($ git commit)')}`,
+    getNotPossibleReason: (isChecked) => (changeSteps.some(isChecked) ? null : 'there is no change to commit'),
     // The package.json files that the package.json steps changed (and pnpm-lock.yaml)
     run: (isDone) => {
       const doneSteps = packageJsonSteps.filter(isDone)
       const lockfilePath = getLockfilePath(monorepoRootDir)
-      return commitChanges(monorepoRootDir, changes, [
-        ...doneSteps.map((step) => step.packageJsonPath),
-        ...(doneSteps.some((step) => step.updatesLockfile) && fs.existsSync(lockfilePath) ? [lockfilePath] : []),
-      ])
+      return commitChanges(
+        monorepoRootDir,
+        workflowFileSteps.filter(isDone).map(({ change }) => change),
+        [
+          ...doneSteps.map((step) => step.packageJsonPath),
+          ...(doneSteps.some((step) => step.updatesLockfile) && fs.existsSync(lockfilePath) ? [lockfilePath] : []),
+        ],
+      )
     },
-    manual: null,
+    manual: `Commit the changes ${highlightCommand('$ git commit')}`,
   }
 }
 
 /** The manual steps: the ones of the steps that weren't done, the ones of npm's trusted publishers, then the hints */
-function logInitManualSteps(steps: Step[], outcomes: Map<Step, StepOutcome>, npm: NpmSteps | null, commitStep: Step) {
+function logInitManualSteps(
+  steps: Step[],
+  outcomes: Map<Step, StepOutcome>,
+  npm: NpmSteps | null,
+  /** The manual steps of npm's trusted publishers come after it */
+  lastChangeStep: Step | null,
+) {
   const manualNpm = npm?.getManual(outcomes) ?? []
   const hints = [
     ...(npm?.getHints(outcomes) ?? []),
@@ -138,8 +201,8 @@ function logInitManualSteps(steps: Step[], outcomes: Map<Step, StepOutcome>, npm
       steps.some((step) => !step.alwaysRun && !step.notPossibleReason) &&
       formatHint(`To let release-me do it for you, run ${pc.bold(initCommand)} in a terminal`),
   ].filter((hint): hint is string => !!hint)
-  // The manual steps of npm's trusted publishers: after the package.json steps
-  logManualSteps(steps, outcomes, { manual: manualNpm, before: steps[steps.indexOf(commitStep) + 1], hints })
+  const before = lastChangeStep ? steps[steps.indexOf(lastChangeStep) + 1] : steps[0]
+  logManualSteps(steps, outcomes, { manual: manualNpm, before, hints })
 }
 
 async function commitChanges(monorepoRootDir: string, changes: WriteResult[], otherFilePaths: string[]) {
@@ -167,16 +230,19 @@ async function commitChanges(monorepoRootDir: string, changes: WriteResult[], ot
 }
 
 /** Pushes the commit to the default branch: the GitHub Actions run the workflow files of the default branch */
-async function getPushStep(monorepoRootDir: string, repo: string | null, willCommit: boolean): Promise<Step | null> {
+async function getPushStep(
+  monorepoRootDir: string,
+  repo: string | null,
+  commitStep: Step | null,
+): Promise<Step | null> {
   const defaultBranch = await getDefaultBranch(monorepoRootDir)
   const branch = await getCurrentBranch(monorepoRootDir)
   // Up-to-date origin/<default branch>: whether there is something to push, and whether the push would be rejected
   if (repo && defaultBranch && branch === defaultBranch) await gitFetch(monorepoRootDir, defaultBranch)
   const isBehind = !!branch && (await isBehindOrigin(monorepoRootDir, branch))
-  // Nothing to commit: only if the default branch has commits to push (e.g. the ones of a previous run)
-  if (!willCommit && !(branch && branch === defaultBranch && (await isAheadOfOrigin(monorepoRootDir, branch)))) {
-    return null
-  }
+  // The default branch has commits to push (e.g. the ones of a previous run)
+  const hasCommitsToPush = !!branch && branch === defaultBranch && (await isAheadOfOrigin(monorepoRootDir, branch))
+  if (!commitStep && !hasCommitsToPush) return null
   const getNotPossibleReason = () => {
     if (!repo) return `${pc.cyan('origin')} isn't a GitHub repository ${logDetail('$ git remote get-url origin')}`
     if (!branch) return `${pc.cyan('HEAD')} isn't a branch`
@@ -196,6 +262,8 @@ async function getPushStep(monorepoRootDir: string, repo: string | null, willCom
   return {
     label: `Push the commit ${pc.dim(`($ git push origin ${defaultBranch ?? branch})`)}`,
     notPossibleReason: getNotPossibleReason(),
+    getNotPossibleReason: (isChecked) =>
+      !hasCommitsToPush && !(commitStep && isChecked(commitStep)) ? 'there is no commit to push' : null,
     run: async () => {
       // E.g. nothing was committed (the user unchecked all package.json steps)
       if (!(await isAheadOfOrigin(monorepoRootDir, branch!))) return true
@@ -209,8 +277,11 @@ async function getPushStep(monorepoRootDir: string, repo: string | null, willCom
   }
 }
 
-async function getGitHubReleaseSyncStep(): Promise<Step> {
+/** @param releaseGitHubStep The step that creates release-github.yml */
+async function getGitHubReleaseSyncStep(releaseGitHubStep: Step): Promise<Step> {
   return {
+    getNotPossibleReason: (isChecked) =>
+      isChecked(releaseGitHubStep) ? null : `${pc.bold(releaseGitHubWorkflowFile.fileName)} isn't created`,
     label: `Create the GitHub Releases of CHANGELOG.md ${pc.dim(`(one per version, ${githubReleaseSyncCommand})`)}`,
     notPossibleReason: (await getGitHubToken())
       ? null
@@ -250,9 +321,9 @@ async function getNpmSteps(packages: ReleaseMePackage[], repo: string | null, re
   } else if (renamed) {
     // The trusted publisher of the old workflow still exists, and its releases look like release-npm.yml's
     console.log(
-      `${pc.bold(renamed.fileName)} was renamed ${pc.bold(
+      `${pc.bold(renamed.fileName)} is renamed ${pc.bold(
         releaseNpmWorkflowFile.fileName,
-      )}: the connection of ${pc.bold(renamed.fileName)} doesn't work anymore`,
+      )} (see below): the connection of ${pc.bold(renamed.fileName)} won't work anymore`,
     )
   } else {
     const statuses = await Promise.all(

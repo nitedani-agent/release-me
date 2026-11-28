@@ -3,7 +3,9 @@ export { isWorkflowFileUpToDate }
 export { publishesViaGitHubAction }
 export { releaseGitHubWorkflowFile }
 export { releaseNpmWorkflowFile }
-export { writeWorkflowFiles }
+export { getWorkflowFileChanges }
+export { writeWorkflowFile }
+export { getWorkflowFileExpected }
 export type { WorkflowFile }
 export type { WorkflowFileOptions }
 export type { WriteResult }
@@ -123,40 +125,37 @@ type WriteResult = { workflowFile: WorkflowFile } & (
   | { status: 'created' | 'updated' | 'up-to-date' }
   | { status: 'renamed'; old: WorkflowFileOld }
 )
-/** Create, update, or rename the workflow files `workflowFilesToWrite` */
-function writeWorkflowFiles(monorepoRootDir: string, workflowFilesToWrite: WorkflowFile[]): WriteResult[] {
-  // Check all files before writing any
-  const writes = workflowFilesToWrite.map((workflowFile) => {
+/** Whether the workflow files `workflowFiles` must be created, updated, or renamed (without writing them) */
+function getWorkflowFileChanges(monorepoRootDir: string, workflowFiles: WorkflowFile[]): WriteResult[] {
+  return workflowFiles.map((workflowFile) => {
     const content = readWorkflowFile(monorepoRootDir, workflowFile)
-    const filePath = path.join(monorepoRootDir, workflowFile.filePath)
     if (content !== null && !isReleaseMeWorkflowFile(content, workflowFile)) {
       // Don't overwrite a file that has nothing to do with release-me
       throw new Error(
         pc.red(
           pc.bold(
-            `${filePath} already exists and it isn't release-me's: rename or remove it, then re-run ${pc.bold(
-              initCommand,
-            )}.`,
+            `${path.join(
+              monorepoRootDir,
+              workflowFile.filePath,
+            )} already exists and it isn't release-me's: rename or remove it, then re-run ${pc.bold(initCommand)}.`,
           ),
         ),
       )
     }
-    return { workflowFile, filePath, content }
-  })
-  return writes.map(({ workflowFile, filePath, content }) => {
-    const contentExpected = getWorkflowFileExpected(workflowFile)
     const old = getWorkflowFileOld(monorepoRootDir, workflowFile)
-    if (content !== contentExpected) {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true })
-      fs.writeFileSync(filePath, contentExpected)
-    }
-    if (old) {
-      fs.rmSync(path.join(monorepoRootDir, old.filePath))
-      return { workflowFile, status: 'renamed', old }
-    }
+    if (old) return { workflowFile, status: 'renamed', old }
+    const contentExpected = getWorkflowFileExpected(workflowFile)
     const status = content === contentExpected ? 'up-to-date' : content === null ? 'created' : 'updated'
     return { workflowFile, status }
   })
+}
+
+/** Creates, updates, or renames the workflow file of `change` */
+function writeWorkflowFile(monorepoRootDir: string, change: WriteResult): void {
+  const filePath = path.join(monorepoRootDir, change.workflowFile.filePath)
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, getWorkflowFileExpected(change.workflowFile))
+  if (change.status === 'renamed') fs.rmSync(path.join(monorepoRootDir, change.old.filePath))
 }
 
 /** The workflow file of the installed release-me */
