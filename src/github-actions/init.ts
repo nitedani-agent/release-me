@@ -23,7 +23,7 @@ import { githubReleaseSyncCommand, initCommand, npmConnectionCommand } from './c
 import { getInstallSteps, getLockfilePath, getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
 import { logManualSteps, runSteps, type Step, type StepOutcome } from './steps.ts'
 import { getGitHubRepo, noGitHubRepoMessage } from './utils/githubRepo.ts'
-import { getCurrentBranch, getDefaultBranch, gitPush, isAheadOfOrigin } from './utils/git.ts'
+import { getCurrentBranch, getDefaultBranch, gitFetch, gitPush, isAheadOfOrigin, isBehindOrigin } from './utils/git.ts'
 import {
   getWorkflowFilesToInit,
   releaseGitHubWorkflowFile,
@@ -158,6 +158,9 @@ async function commitChanges(monorepoRootDir: string, changes: WriteResult[], ot
 async function getPushStep(monorepoRootDir: string, repo: string | null, willCommit: boolean): Promise<Step | null> {
   const defaultBranch = await getDefaultBranch(monorepoRootDir)
   const branch = await getCurrentBranch(monorepoRootDir)
+  // Up-to-date origin/<default branch>: whether there is something to push, and whether the push would be rejected
+  if (repo && defaultBranch && branch === defaultBranch) await gitFetch(monorepoRootDir, defaultBranch)
+  const isBehind = !!branch && (await isBehindOrigin(monorepoRootDir, branch))
   // Nothing to commit: only if the default branch has commits to push (e.g. the ones of a previous run)
   if (!willCommit && !(branch && branch === defaultBranch && (await isAheadOfOrigin(monorepoRootDir, branch)))) {
     return null
@@ -171,6 +174,11 @@ async function getPushStep(monorepoRootDir: string, repo: string | null, willCom
         defaultBranch,
       )} (GitHub runs the GitHub Actions of the default branch)`
     }
+    if (isBehind) {
+      return `${pc.cyan(`origin/${branch}`)} has commits that ${pc.cyan(branch)} doesn't have: run ${highlightCommand(
+        '$ git pull --rebase',
+      )} first`
+    }
     return null
   }
   return {
@@ -181,7 +189,11 @@ async function getPushStep(monorepoRootDir: string, repo: string | null, willCom
       if (!(await isAheadOfOrigin(monorepoRootDir, branch!))) return true
       return gitPush(monorepoRootDir, branch!)
     },
-    manual: `Push the commit to the default branch ${highlightCommand('$ git push')}`,
+    manual: `Push the commit to the default branch ${
+      isBehind
+        ? `${highlightCommand('$ git pull --rebase')} ${highlightCommand('$ git push')}`
+        : highlightCommand('$ git push')
+    }`,
   }
 }
 

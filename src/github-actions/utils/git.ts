@@ -1,6 +1,8 @@
 export { getDefaultBranch }
 export { getCurrentBranch }
 export { isAheadOfOrigin }
+export { isBehindOrigin }
+export { gitFetch }
 export { getFileOnOrigin }
 export { gitPush }
 export { hasUncommittedChanges }
@@ -34,6 +36,32 @@ async function isAheadOfOrigin(cwd: string, branch: string): Promise<boolean> {
   // origin doesn't have the branch
   if (failed) return true
   return stdout !== '0'
+}
+
+/** Whether `origin` has commits that the branch `branch` doesn't have (as known locally, i.e. as of the last `$ git fetch`) */
+async function isBehindOrigin(cwd: string, branch: string): Promise<boolean> {
+  const { stdout, failed } = await git(
+    ['rev-list', '--count', `refs/heads/${branch}..refs/remotes/origin/${branch}`],
+    cwd,
+  )
+  // origin doesn't have the branch
+  if (failed) return false
+  return stdout !== '0'
+}
+
+/**
+ * Fetches the branch `branch` of `origin` (it updates `origin/${branch}`). Best effort: e.g. offline, it fails silently
+ * and release-me uses what it knows of `origin` as of the last `$ git fetch`.
+ */
+async function gitFetch(cwd: string, branch: string): Promise<void> {
+  await execa('git', ['fetch', '--quiet', 'origin', branch], {
+    cwd,
+    reject: false,
+    timeout: 30 * 1000,
+    // Don't wait for a credential prompt
+    stdin: 'ignore',
+    env: { GIT_TERMINAL_PROMPT: '0' },
+  })
 }
 
 /** The content of the file `filePath` on the branch `branch` of `origin` (as known locally), or `null` if it doesn't have it */
