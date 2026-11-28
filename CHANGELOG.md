@@ -1,3 +1,12 @@
+## [0.5.9](https://github.com/brillout/release-me/compare/v0.5.8...v0.5.9) (2026-11-28)
+
+
+### Features
+
+* init runs the setup steps on behalf of the user, and `npm-connection` shows and fixes the npm connections ([#29](https://github.com/brillout/release-me/issues/29)) ([4b0ca20](https://github.com/brillout/release-me/commit/4b0ca20a4f76f78d10ae6ca3ad46adc913007590))
+
+
+
 ## [0.5.8](https://github.com/brillout/release-me/compare/v0.5.7...v0.5.8) (2026-11-26)
 
 
