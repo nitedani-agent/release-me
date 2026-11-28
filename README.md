@@ -96,11 +96,19 @@ Publish your npm packages.
    >  }
    > ```
 
-4. Set up [the  GitHub Actions](#github-actions):
+4. Set up the GitHub Actions:
 
    ```shell
    pnpm exec release-me init
    ```
+
+   > ℹ️  **Two GitHub Actions**
+   >
+   > The `init` command sets up two GitHub Actions for:
+   > - `.github/workflows/release-npm.yml` => for npm publishing, see [GitHub Actions](#github-actions)
+   > - `.github/workflows/release-github.yml` => for creating GitHub Releases, see [GitHub Actions](#github-actions)
+   >
+   > It's optional: you can skip the `init` command to set up none, or set up only one using `init --npm` or `init --github`.
 
 5. From now on, make sure to follow [Conventional Commits](#conventional-commits) for correct `CHANGELOG.md` generation.
 
@@ -140,10 +148,6 @@ Each package has its own `CHANGELOG.md` (`packages/my-package/CHANGELOG.md`), wi
 
 ## GitHub Actions
 
-You can set up GitHub Actions:
-- `.github/workflows/release-npm.yml` => publishes to npm
-- `.github/workflows/release-github.yml` => keeps GitHub Releases in sync with `CHANGELOG.md`
-
 ### Npm Release
 
 Instead of publishing from your machine (which requires 2FA), you can let a GitHub Action publish to npm (without 2FA and without an npm secret token).
@@ -161,7 +165,7 @@ pnpm exec release-me init --npm
 
 ### GitHub Release
 
-You can let a GitHub Action synchronize your GitHub Releases with `CHANGELOG.md`.
+You can let a GitHub Action automatically generate GitHub Releases from your `CHANGELOG.md` files.
 
 To set it up, run the following command which will create a `.github/workflows/release-github.yml` file.
 
