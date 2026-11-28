@@ -15,8 +15,10 @@ export { getPackageJson }
 export { assertInstalledAtRoot }
 export { getReleaseMePackages }
 export { hasReleaseScript }
+export { thisPackageName }
 export { updatePackageJsonVersion }
 export { updateVersionMacro }
+export type { Files }
 export type { PackageJson }
 export type { ReleaseMePackage }
 
@@ -842,12 +844,16 @@ function analyzeMonorepo(filesMonorepo: Files, packageRootDir: string, packageNa
 }
 
 /** release-me must be installed at the root (e.g. the GitHub Action runs it from there): in the devDependencies (or the dependencies) of the root package.json */
-function assertInstalledAtRoot(monorepoRootDir: string) {
+function assertInstalledAtRoot(
+  monorepoRootDir: string,
+  /** `$ pnpm exec release-me init` adds it to the devDependencies (see getInstallSteps()): only the root package.json is required */
+  { isInit = false }: { isInit?: boolean } = {},
+) {
   const packageJsonPath = path.join(monorepoRootDir, 'package.json')
   const packageJson = fs.existsSync(packageJsonPath) ? getPackageJson(monorepoRootDir).packageJson : null
-  const isInstalled = !!(
-    packageJson?.devDependencies?.[thisPackageName] || packageJson?.dependencies?.[thisPackageName]
-  )
+  const isInstalled =
+    !!packageJson &&
+    (isInit || !!packageJson.devDependencies?.[thisPackageName] || !!packageJson.dependencies?.[thisPackageName])
   assertUsage(
     isInstalled,
     `${pc.cyan(thisPackageName)} should be installed at the root: add it to the devDependencies of ${packageJsonPath}.`,

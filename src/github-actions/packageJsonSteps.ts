@@ -1,6 +1,8 @@
 export { getPackageJsonSteps }
+export { getInstallSteps }
 export { setPackageJsonFields }
 export { getRepositoryValue }
+export { getLockfilePath }
 export type { PackageJsonStep }
 
 // The package.json changes that the GitHub Actions of release-me require, as steps of `$ pnpm exec release-me init` (see
@@ -8,18 +10,69 @@ export type { PackageJsonStep }
 
 import * as fs from 'fs'
 import * as path from 'path'
+import { fileURLToPath } from 'url'
 import execa from 'execa'
 import pc from '@brillout/picocolors'
 import { getRepositoryMismatch } from './release-npm/githubAction.ts'
 import { hasUncommittedChanges } from './utils/git.ts'
 import type { Step } from './steps.ts'
-import { getPackageJson, hasReleaseScript, type PackageJson, type ReleaseMePackage } from '../releaseMe.ts'
+import {
+  getFilesMonorepoPackageJson,
+  getPackageJson,
+  hasReleaseScript,
+  thisPackageName,
+  type Files,
+  type PackageJson,
+  type ReleaseMePackage,
+} from '../releaseMe.ts'
+import { highlightCommand, logCommand } from '../utils.ts'
 
 type PackageJsonStep = Step & {
   /** The package.json the step changes */
   packageJsonPath: string
   /** What the GitHub Action release-npm.yml requires, e.g. `a build script in package.json` (`null`: it doesn't require the step) */
   requiredByGitHubAction: string | null
+  /** The step also updates pnpm-lock.yaml (which is committed along with the package.json) */
+  updatesLockfile?: true
+}
+
+/** The step that installs release-me at the root (otherwise release-me, and the GitHub Action, abort: see assertInstalledAtRoot()) */
+async function getInstallSteps(monorepoRootDir: string, filesMonorepo: Files): Promise<PackageJsonStep[]> {
+  const steps: PackageJsonStep[] = []
+  const lockfilePath = getLockfilePath(monorepoRootDir)
+  const name = pc.cyan(thisPackageName)
+
+  // The GitHub Action runs release-me from the root (`$ pnpm exec release-me ci-publish`)
+  const { packageJson: rootPackageJson, packageJsonPath: rootPackageJsonPath } = getPackageJson(monorepoRootDir)
+  if (!rootPackageJson.devDependencies?.[thisPackageName] && !rootPackageJson.dependencies?.[thisPackageName]) {
+    const fileName = pc.bold(path.relative(monorepoRootDir, rootPackageJsonPath))
+    const label = `Add ${name} to the ${pc.bold('devDependencies')} of ${fileName}`
+    steps.push({
+      packageJsonPath: rootPackageJsonPath,
+      label,
+      notPossibleReason: await getUncommittedReason(monorepoRootDir, [rootPackageJsonPath, lockfilePath]),
+      run: updateWithLockfile(monorepoRootDir, rootPackageJsonPath, {
+        devDependencies: addDependency(rootPackageJson.devDependencies, getVersionRange(filesMonorepo)),
+      }),
+      manual: `${label} ${highlightCommand(`$ pnpm add --save-dev --workspace-root ${thisPackageName}`)}`,
+      requiredByGitHubAction: `${name} in the ${pc.bold('devDependencies')} of ${fileName}`,
+      updatesLockfile: true,
+    })
+  }
+
+  return steps
+}
+
+/** The version range of release-me: the one of the other package.json files (e.g. `^0.5.9`), or else the installed release-me's */
+function getVersionRange(filesMonorepo: Files): string {
+  for (const { filePathAbsolute } of getFilesMonorepoPackageJson(filesMonorepo)) {
+    const { packageJson } = getPackageJson(path.dirname(filePathAbsolute))
+    const range = packageJson.devDependencies?.[thisPackageName] ?? packageJson.dependencies?.[thisPackageName]
+    // Not e.g. `link:../release-me` nor `workspace:*`
+    if (range && /^[\^~]?\d/.test(range)) return range
+  }
+  const thisPackageRootDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../..')
+  return `^${getPackageJson(thisPackageRootDir).packageJson.version}`
 }
 
 const releaseScripts = {
@@ -37,10 +90,6 @@ async function getPackageJsonSteps(
   withReleaseNpm: boolean,
 ): Promise<PackageJsonStep[]> {
   const steps: PackageJsonStep[] = []
-  const getUncommittedReason = async (packageJsonPath: string) =>
-    (await hasUncommittedChanges(monorepoRootDir, [packageJsonPath]))
-      ? `${pc.bold(path.relative(monorepoRootDir, packageJsonPath))} has uncommitted changes`
-      : null
   const update = (packageJsonPath: string, fields: Record<string, unknown>) => async () => {
     setPackageJsonFields(packageJsonPath, fields)
     return true
@@ -61,7 +110,9 @@ async function getPackageJsonSteps(
       steps.push({
         packageJsonPath,
         label: `Set ${field} in ${fileName}`,
-        notPossibleReason: pnpmVersion ? await getUncommittedReason(packageJsonPath) : "pnpm isn't installed",
+        notPossibleReason: pnpmVersion
+          ? await getUncommittedReason(monorepoRootDir, [packageJsonPath])
+          : "pnpm isn't installed",
         run: update(packageJsonPath, { packageManager: value }),
         manual: `Set ${field} in ${fileName} (the GitHub Actions install that pnpm version)`,
         requiredByGitHubAction: `${pc.bold('"packageManager"')} in ${fileName}`,
@@ -80,7 +131,7 @@ async function getPackageJsonSteps(
       steps.push({
         packageJsonPath,
         label: `Add the release scripts to ${fileName} ${example}`,
-        notPossibleReason: await getUncommittedReason(packageJsonPath),
+        notPossibleReason: await getUncommittedReason(monorepoRootDir, [packageJsonPath]),
         run: update(packageJsonPath, { scripts }),
         manual: `Add the release scripts to ${fileName} ${example}`,
         // The GitHub Action releases the root package of a repository with a single package (see getReleaseMePackages())
@@ -116,7 +167,7 @@ async function getPackageJsonSteps(
       steps.push({
         packageJsonPath,
         label: `Set ${field} of ${fileName} to ${url}`,
-        notPossibleReason: await getUncommittedReason(packageJsonPath),
+        notPossibleReason: await getUncommittedReason(monorepoRootDir, [packageJsonPath]),
         run: update(packageJsonPath, { repository }),
         manual: `Set ${field} of ${fileName} to ${url} ${detail}`,
         requiredByGitHubAction: `${field} of ${fileName} to be ${url}`,
@@ -144,6 +195,41 @@ function setPackageJsonFields(packageJsonPath: string, fields: Record<string, un
   const indent = /^\{\r?\n([ \t]+)"/.exec(content)?.[1] ?? '  '
   const packageJson = { ...JSON.parse(content), ...fields }
   fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, indent) + '\n')
+}
+
+/** The dependencies `dependencies` with release-me (sorted, like `$ pnpm add` does) */
+function addDependency(dependencies: Record<string, string> | undefined, version: string): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries({ ...dependencies, [thisPackageName]: version }).sort(([a], [b]) => (a < b ? -1 : 1)),
+  )
+}
+
+/** Why the files `filePaths` can't be changed (and committed): they have uncommitted changes */
+async function getUncommittedReason(monorepoRootDir: string, filePaths: string[]): Promise<string | null> {
+  for (const filePath of filePaths) {
+    if (await hasUncommittedChanges(monorepoRootDir, [filePath])) {
+      return `${pc.bold(path.relative(monorepoRootDir, filePath))} has uncommitted changes`
+    }
+  }
+  return null
+}
+
+function getLockfilePath(monorepoRootDir: string) {
+  return path.join(monorepoRootDir, 'pnpm-lock.yaml')
+}
+
+/** Sets the fields `fields` of the package.json `packageJsonPath`, then updates pnpm-lock.yaml (reverting the package.json if it fails) */
+function updateWithLockfile(monorepoRootDir: string, packageJsonPath: string, fields: Record<string, unknown>) {
+  return async () => {
+    const content = fs.readFileSync(packageJsonPath, 'utf8')
+    setPackageJsonFields(packageJsonPath, fields)
+    // `--lockfile-only`: see bumpPnpmLockFile()
+    const args = ['install', '--lockfile-only']
+    logCommand(`$ pnpm ${args.join(' ')}`)
+    const { failed } = await execa('pnpm', args, { cwd: monorepoRootDir, stdio: 'inherit', reject: false })
+    if (failed) fs.writeFileSync(packageJsonPath, content)
+    return !failed
+  }
 }
 
 async function getPnpmVersion(): Promise<string | null> {

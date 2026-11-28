@@ -5,6 +5,7 @@ export { init }
 // ./steps.ts): the package.json fields the GitHub Actions require, npm's trusted publishers, the push, the commit release
 // that persists the new trusted publishers, and the first sync of GitHub Releases.
 
+import * as fs from 'fs'
 import pc from '@brillout/picocolors'
 import { githubReleaseSync } from './release-github/cli/github-release-sync.ts'
 import { getGitHubToken } from './release-github/utils/github-env.ts'
@@ -19,7 +20,7 @@ import { getPublishingStatus, type PublishingStatus } from './release-npm/npmReg
 import { getNpmUnavailableReason } from './release-npm/npmTrust.ts'
 import { getDeleteTrustedPublisherManual, getTrustedPublisherManual } from './release-npm/trustedPublisher.ts'
 import { githubReleaseSyncCommand, initCommand, npmConnectionCommand } from './commands.ts'
-import { getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
+import { getInstallSteps, getLockfilePath, getPackageJsonSteps, type PackageJsonStep } from './packageJsonSteps.ts'
 import { logManualSteps, runSteps, type Step, type StepOutcome } from './steps.ts'
 import { getGitHubRepo, noGitHubRepoMessage } from './utils/githubRepo.ts'
 import { getCurrentBranch, getDefaultBranch, gitPush, isAheadOfOrigin } from './utils/git.ts'
@@ -43,8 +44,9 @@ import { formatHint, highlightCommand, logCommand, logDetail, logTitle, run } fr
 
 async function init(options: WorkflowFileOptions) {
   const monorepoRootDir = await getMonorepoRootDir()
-  assertInstalledAtRoot(monorepoRootDir)
-  const packages = getReleaseMePackages(await getFilesInsideDir(monorepoRootDir))
+  assertInstalledAtRoot(monorepoRootDir, { isInit: true })
+  const filesMonorepo = await getFilesInsideDir(monorepoRootDir)
+  const packages = getReleaseMePackages(filesMonorepo)
   const packageNames = packages.map(({ packageName }) => packageName)
   const repo = await getGitHubRepo(monorepoRootDir)
 
@@ -55,7 +57,10 @@ async function init(options: WorkflowFileOptions) {
   const changes = results.filter(({ status }) => status !== 'up-to-date')
 
   // The steps, in order
-  const packageJsonSteps = await getPackageJsonSteps(monorepoRootDir, packages, repo, !!releaseNpmResult)
+  const packageJsonSteps = [
+    ...(await getInstallSteps(monorepoRootDir, filesMonorepo)),
+    ...(await getPackageJsonSteps(monorepoRootDir, packages, repo, !!releaseNpmResult)),
+  ]
   const commitStep = getCommitStep(monorepoRootDir, changes, packageJsonSteps)
   const npm = releaseNpmResult ? await getNpmSteps(packages, repo, releaseNpmResult) : null
   const connectSteps = npm?.connectSteps ?? []
@@ -98,13 +103,15 @@ function getCommitStep(monorepoRootDir: string, changes: WriteResult[], packageJ
   return {
     label: 'Commit',
     alwaysRun: true,
-    // The package.json files that the package.json steps changed
-    run: (isDone) =>
-      commitChanges(
-        monorepoRootDir,
-        changes,
-        packageJsonSteps.filter(isDone).map((step) => step.packageJsonPath),
-      ),
+    // The package.json files that the package.json steps changed (and pnpm-lock.yaml)
+    run: (isDone) => {
+      const doneSteps = packageJsonSteps.filter(isDone)
+      const lockfilePath = getLockfilePath(monorepoRootDir)
+      return commitChanges(monorepoRootDir, changes, [
+        ...doneSteps.map((step) => step.packageJsonPath),
+        ...(doneSteps.some((step) => step.updatesLockfile) && fs.existsSync(lockfilePath) ? [lockfilePath] : []),
+      ])
+    },
     manual: null,
   }
 }
@@ -123,7 +130,7 @@ function logInitManualSteps(steps: Step[], outcomes: Map<Step, StepOutcome>, npm
   logManualSteps(steps, outcomes, { manual: manualNpm, before: steps[steps.indexOf(commitStep) + 1], hints })
 }
 
-async function commitChanges(monorepoRootDir: string, changes: WriteResult[], packageJsonPaths: string[]) {
+async function commitChanges(monorepoRootDir: string, changes: WriteResult[], otherFilePaths: string[]) {
   // A renamed workflow file: also its removed old file
   const filePaths = [
     ...changes.flatMap((change) =>
@@ -131,7 +138,7 @@ async function commitChanges(monorepoRootDir: string, changes: WriteResult[], pa
         ? [change.old.filePath, change.workflowFile.filePath]
         : [change.workflowFile.filePath],
     ),
-    ...new Set(packageJsonPaths),
+    ...new Set(otherFilePaths),
   ]
   if (filePaths.length === 0) return true
   const isSetup = changes.some(({ status }) => status === 'created')
