@@ -15,6 +15,9 @@ export { getPackageJson }
 export { assertInstalledAtRoot }
 export { getReleaseMePackages }
 export { hasReleaseScript }
+export { isReleaseScript }
+export { getPrivatePackageError }
+export { noPackageToReleaseError }
 export { thisPackageName }
 export { updatePackageJsonVersion }
 export { updateVersionMacro }
@@ -865,8 +868,18 @@ type ReleaseMePackage = ReturnType<typeof getReleaseMePackages>[number]
  * The packages that release-me releases: the ones with a script that runs release-me (e.g. `"release": "release-me patch"`).
  * If no package has such script: the root package (e.g. a repository with a single package, released with `$ pnpm exec release-me patch`).
  */
-function getReleaseMePackages(filesMonorepo: Files) {
-  const packages: { packageName: string; packageRootDir: string; packageRootDirRelative: string }[] = []
+function getReleaseMePackages(
+  filesMonorepo: Files,
+  /** `$ pnpm exec release-me init` asks the user what to do with them (see resolvePrivatePackages()) */
+  { allowPrivate = false }: { allowPrivate?: boolean } = {},
+) {
+  const packages: {
+    packageName: string
+    packageRootDir: string
+    packageRootDirRelative: string
+    /** It has a script that runs release-me but it's private (only with `allowPrivate`) */
+    isPrivate?: true
+  }[] = []
   let rootPackage: (typeof packages)[number] | null = null
   for (const { filePathAbsolute, filePathRelative } of getFilesMonorepoPackageJson(filesMonorepo)) {
     const packageRootDir = path.dirname(filePathAbsolute)
@@ -879,31 +892,37 @@ function getReleaseMePackages(filesMonorepo: Files) {
         packageJson.name,
         `${packageJsonPath} has a script that runs release-me but no name — add a name, or remove the script, ${seeReadme}`,
       )
-      assertUsage(
-        !packageJson.private,
-        `${pc.cyan(
-          packageJson.name,
-        )} has a script that runs release-me but it's private — make it public (remove package.json#private), or remove the script, ${seeReadme}`,
-      )
-      packages.push({ packageName: packageJson.name, packageRootDir, packageRootDirRelative })
+      assertUsage(allowPrivate || !packageJson.private, getPrivatePackageError(packageJson.name))
+      packages.push({
+        packageName: packageJson.name,
+        packageRootDir,
+        packageRootDirRelative,
+        ...(packageJson.private ? { isPrivate: true as const } : {}),
+      })
     } else if (packageRootDirRelative === '.' && packageJson.name && !packageJson.private) {
       rootPackage = { packageName: packageJson.name, packageRootDir, packageRootDirRelative }
     }
   }
   if (packages.length === 0 && rootPackage) packages.push(rootPackage)
-  assertUsage(
-    packages.length > 0,
-    `No package to release — add a script that runs release-me to the package.json of each package to release (e.g. ${pc.bold(
-      '"release": "release-me patch"',
-    )}), see ${pc.underline(readmeGetStarted)}`,
-  )
+  assertUsage(packages.length > 0, noPackageToReleaseError)
   return packages
+}
+const noPackageToReleaseError = `No package to release — add a script that runs release-me to the package.json of each package to release (e.g. ${pc.bold(
+  '"release": "release-me patch"',
+)}), see ${pc.underline(readmeGetStarted)}`
+function getPrivatePackageError(packageName: string): string {
+  return `${pc.cyan(
+    packageName,
+  )} has a script that runs release-me but it's private — make it public (remove package.json#private), or remove the script, see ${pc.underline(
+    readmeGetStarted,
+  )}`
 }
 /** Whether one of the scripts runs release-me, e.g. `"release": "release-me patch"` */
 function hasReleaseScript(packageJson: PackageJson): boolean {
-  return Object.values(packageJson.scripts ?? {}).some(
-    (script) => typeof script === 'string' && script.split(/[\s;&|()]+/).includes('release-me'),
-  )
+  return Object.values(packageJson.scripts ?? {}).some(isReleaseScript)
+}
+function isReleaseScript(script: unknown): boolean {
+  return typeof script === 'string' && script.split(/[\s;&|()]+/).includes('release-me')
 }
 
 function logBoolean(bool: boolean): 'yes' | 'no' {

@@ -25,6 +25,7 @@ import {
   getInstallSteps,
   getLockfilePath,
   getPackageJsonSteps,
+  resolvePrivatePackages,
   type PackageJsonStep,
 } from './packageJsonSteps.ts'
 import { logManualSteps, runSteps, type Step, type StepOutcome } from './steps.ts'
@@ -53,7 +54,10 @@ async function init(options: WorkflowFileOptions) {
   assertInstalledAtRoot(monorepoRootDir, { isInit: true })
   assertPnpm(monorepoRootDir)
   const filesMonorepo = await getFilesInsideDir(monorepoRootDir)
-  const packages = getReleaseMePackages(filesMonorepo)
+  const { packages, steps: privatePackageSteps } = await resolvePrivatePackages(
+    monorepoRootDir,
+    getReleaseMePackages(filesMonorepo, { allowPrivate: true }),
+  )
   const packageNames = packages.map(({ packageName }) => packageName)
   const repo = await getGitHubRepo(monorepoRootDir)
 
@@ -65,6 +69,7 @@ async function init(options: WorkflowFileOptions) {
 
   // The steps, in order
   const packageJsonSteps = [
+    ...privatePackageSteps,
     ...(await getInstallSteps(monorepoRootDir, filesMonorepo)),
     ...(await getPackageJsonSteps(monorepoRootDir, packages, repo, !!releaseNpmResult)),
   ]

@@ -4,6 +4,7 @@ export { setPackageJsonFields }
 export { getRepositoryValue }
 export { getLockfilePath }
 export { assertPnpm }
+export { resolvePrivatePackages }
 export type { PackageJsonStep }
 
 // The package.json changes that the GitHub Actions of release-me require, as steps of `$ pnpm exec release-me init` (see
@@ -20,12 +21,16 @@ import type { Step } from './steps.ts'
 import {
   getFilesMonorepoPackageJson,
   getPackageJson,
+  getPrivatePackageError,
   hasReleaseScript,
+  isReleaseScript,
+  noPackageToReleaseError,
   thisPackageName,
   type Files,
   type PackageJson,
   type ReleaseMePackage,
 } from '../releaseMe.ts'
+import { askQuestion, isTerminal } from '../utils/ask.ts'
 import { assertUsage, highlightCommand, logCommand } from '../utils.ts'
 
 type PackageJsonStep = Step & {
@@ -86,6 +91,72 @@ function assertPnpm(monorepoRootDir: string) {
     !name || name === 'pnpm',
     `${packageJsonPath}#${pc.bold(field)} is ${pc.cyan(name!)}, but release-me only supports ${pc.cyan('pnpm')}.`,
   )
+}
+
+/**
+ * The packages that have a script that runs release-me but are private: the user chooses to make them public, or to not
+ * release them (otherwise release-me aborts, see getReleaseMePackages()).
+ * @returns The packages to release, and the steps that apply the user's choices (before the commit)
+ */
+async function resolvePrivatePackages(
+  monorepoRootDir: string,
+  packages: ReleaseMePackage[],
+): Promise<{ packages: ReleaseMePackage[]; steps: PackageJsonStep[] }> {
+  const packagesToRelease: ReleaseMePackage[] = []
+  const steps: PackageJsonStep[] = []
+  for (const pkg of packages) {
+    if (!pkg.isPrivate) {
+      packagesToRelease.push(pkg)
+      continue
+    }
+    const { packageJson, packageJsonPath } = getPackageJson(pkg.packageRootDir)
+    const name = pc.cyan(pkg.packageName)
+    const fileName = pc.bold(path.relative(monorepoRootDir, packageJsonPath))
+    const error = getPrivatePackageError(pkg.packageName)
+    // Without terminal, release-me can't ask
+    assertUsage(isTerminal(), error)
+    const uncommittedReason = await getUncommittedReason(monorepoRootDir, [packageJsonPath])
+    assertUsage(!uncommittedReason, `${error} (release-me can't do it for you: ${uncommittedReason})`)
+    const makePublic = `Make ${name} public ${pc.dim(`(remove "private": true from ${fileName})`)}`
+    const dontRelease = `Don't release ${name} ${pc.dim(`(remove its scripts that run release-me from ${fileName})`)}`
+    console.log(`${pc.yellow('⚠️')}  ${name} has a script that runs release-me but it's private:`)
+    console.log(`  ${pc.bold('1.')} ${makePublic}`)
+    console.log(`  ${pc.bold('2.')} ${dontRelease}`)
+    const answer = (await askQuestion(pc.blue(pc.bold('Enter 1 or 2 (or <CTRL-C> to abort): '))))?.trim()
+    assertUsage(answer === '1' || answer === '2', error)
+    if (answer === '1') {
+      packagesToRelease.push(pkg)
+      steps.push({
+        packageJsonPath,
+        label: makePublic,
+        alwaysRun: true,
+        run: async () => {
+          setPackageJsonFields(packageJsonPath, { private: undefined })
+          return true
+        },
+        manual: null,
+        // ci-publish aborts otherwise
+        requiredByGitHubAction: `${name} to be public`,
+      })
+    } else {
+      const scripts = Object.fromEntries(
+        Object.entries(packageJson.scripts ?? {}).filter(([, script]) => !isReleaseScript(script)),
+      )
+      steps.push({
+        packageJsonPath,
+        label: dontRelease,
+        alwaysRun: true,
+        run: async () => {
+          setPackageJsonFields(packageJsonPath, { scripts })
+          return true
+        },
+        manual: null,
+        requiredByGitHubAction: null,
+      })
+    }
+  }
+  assertUsage(packagesToRelease.length > 0, noPackageToReleaseError)
+  return { packages: packagesToRelease, steps }
 }
 
 const releaseScripts = {
