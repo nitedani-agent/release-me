@@ -841,11 +841,13 @@ function analyzeMonorepo(filesMonorepo: Files, packageRootDir: string, packageNa
   }
 }
 
-/** release-me must be in the devDependencies of the root package.json (e.g. the GitHub Action runs it from there) */
+/** release-me must be installed at the root (e.g. the GitHub Action runs it from there): in the devDependencies (or the dependencies) of the root package.json */
 function assertInstalledAtRoot(monorepoRootDir: string) {
   const packageJsonPath = path.join(monorepoRootDir, 'package.json')
-  const isInstalled =
-    fs.existsSync(packageJsonPath) && !!getPackageJson(monorepoRootDir).packageJson.devDependencies?.[thisPackageName]
+  const packageJson = fs.existsSync(packageJsonPath) ? getPackageJson(monorepoRootDir).packageJson : null
+  const isInstalled = !!(
+    packageJson?.devDependencies?.[thisPackageName] || packageJson?.dependencies?.[thisPackageName]
+  )
   assertUsage(
     isInstalled,
     `${pc.cyan(thisPackageName)} should be installed at the root: add it to the devDependencies of ${packageJsonPath}.`,
@@ -863,12 +865,6 @@ function getReleaseMePackages(filesMonorepo: Files) {
   for (const { filePathAbsolute, filePathRelative } of getFilesMonorepoPackageJson(filesMonorepo)) {
     const packageRootDir = path.dirname(filePathAbsolute)
     const { packageJson, packageJsonPath } = getPackageJson(packageRootDir)
-    assertUsage(
-      !packageJson.dependencies?.[thisPackageName],
-      `${pc.cyan('@brillout/release-me')} shouldn't be inside ${pc.gray(packageRootDir)}/package.json#${pc.bold(
-        'dependencies',
-      )} as it should be only in package.json#${pc.bold('devDependencies')} instead.`,
-    )
     const packageRootDirRelative = path.dirname(filePathRelative)
     if (hasReleaseScript(packageJson)) {
       // A script that runs release-me means the package is released: it must be releasable
