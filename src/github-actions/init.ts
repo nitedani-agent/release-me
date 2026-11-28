@@ -141,8 +141,12 @@ async function commitChanges(monorepoRootDir: string, changes: WriteResult[], ot
     ...new Set(otherFilePaths),
   ]
   if (filePaths.length === 0) return true
-  const isSetup = changes.some(({ status }) => status === 'created')
-  const commitMessage = isSetup ? 'ci: set up release-me GitHub Action' : 'ci: update release-me GitHub Action'
+  const commitMessage = changes.some(({ status }) => status === 'created')
+    ? 'ci: set up release-me GitHub Action'
+    : changes.length > 0
+      ? 'ci: update release-me GitHub Action'
+      : // Only package.json changes (the workflow files are up-to-date)
+        'chore: set up release-me'
   await run(['git', 'add', '--', ...filePaths], { cwd: monorepoRootDir })
   // Only commit these files (`$ git commit -- <file>` ignores other staged changes)
   await run(['git', 'commit', '--quiet', '-m', commitMessage, '--', ...filePaths], { cwd: monorepoRootDir })
